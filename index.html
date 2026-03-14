@@ -1,0 +1,840 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<!--
+   ______                            __
+  / ____/___  ____ ___  ____  __  __/ /____  _____
+ / /   / __ \/ __ `__ \/ __ \/ / / / __/ _ \/ ___/
+/ /___/ /_/ / / / / / / /_/ / /_/ / /_/  __/ /
+\____/\____/_/ /_/ /_/ .___/\__,_/\__/\___/_/
+                    /_/
+        Created with Perplexity Computer
+        https://www.perplexity.ai/computer
+-->
+<meta name="generator" content="Perplexity Computer">
+<meta name="author" content="Perplexity Computer">
+<meta property="og:see_also" content="https://www.perplexity.ai/computer">
+<link rel="author" href="https://www.perplexity.ai/computer">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Bolt Pest Man 2.0</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;overflow:hidden;background:#000;touch-action:none;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
+canvas{display:block;image-rendering:pixelated;image-rendering:crisp-edges;background:#000}
+#game-wrapper{width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:#000;overflow:hidden}
+footer{position:fixed;bottom:4px;right:8px;z-index:9999;font-size:9px;opacity:0.4}
+footer a{color:#aaa;text-decoration:none}
+</style>
+</head>
+<body>
+<div id="game-wrapper"><canvas id="c"></canvas></div>
+<footer><a href="https://www.perplexity.ai/computer" target="_blank" rel="noopener noreferrer">Created with Perplexity Computer</a></footer>
+<script>
+(function(){
+'use strict';
+
+// ═══════════════════════════════════════════════════════════
+// BOLT PEST MAN 2.0 — Endless Auto-Runner
+// ═══════════════════════════════════════════════════════════
+
+const W = 400, H = 240;
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+canvas.width = W; canvas.height = H;
+
+// ── Resize ─────────────────────────────────────────────────
+function resize() {
+  const wr = document.getElementById('game-wrapper');
+  const ww = wr.clientWidth, wh = wr.clientHeight;
+  const aspect = W / H;
+  let cw, ch;
+  if (ww / wh > aspect) { ch = wh; cw = ch * aspect; }
+  else { cw = ww; ch = cw / aspect; }
+  canvas.style.width = Math.floor(cw) + 'px';
+  canvas.style.height = Math.floor(ch) + 'px';
+}
+window.addEventListener('resize', resize);
+setTimeout(resize, 50);
+
+// ── Colors ─────────────────────────────────────────────────
+const C = {
+  sky: '#5c94fc', skyBottom: '#8cb8fc',
+  ground: '#c84c0c', groundTop: '#50b850', groundDark: '#a0380c',
+  brick: '#d87c34', brickDark: '#a0580c',
+  skin: '#fcb898', uniform: '#2038ec', uniformDark: '#0018b0',
+  belt: '#fcbc3c', brown: '#8c5010', darkBrown: '#5c3400',
+  white: '#fcfcfc', black: '#000',
+  cloud: '#fcfcfc', cloudShade: '#d0d0f0',
+  hillGreen: '#50b050', hillDark: '#308030',
+  bushGreen: '#40a840',
+  pipe: '#30a030', pipeDark: '#1c6c1c', pipeLight: '#50d050',
+  roachBrown: '#6c3800', spiderGray: '#404040',
+  antRed: '#c83030', beetleGreen: '#207020', flyPurple: '#8040c0',
+  coinGold: '#fcbc3c', coinShine: '#fce8a0',
+  textShadow: '#202020',
+  hardhatYellow: '#fcbc3c', sprayCan: '#40a0fc',
+};
+
+// ── Audio ──────────────────────────────────────────────────
+let audioCtx = null;
+function initAudio() {
+  if (audioCtx) return;
+  try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) {}
+}
+function tone(freq, dur, type, vol, slide) {
+  if (!audioCtx) return;
+  try {
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.type = type || 'square'; o.frequency.value = freq;
+    if (slide) o.frequency.linearRampToValueAtTime(slide, audioCtx.currentTime + dur);
+    g.gain.setValueAtTime(vol || 0.12, audioCtx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
+    o.connect(g).connect(audioCtx.destination); o.start(); o.stop(audioCtx.currentTime + dur);
+  } catch(e) {}
+}
+function sfxJump() { tone(300, 0.15, 'square', 0.1, 600); }
+function sfxStomp() { tone(200, 0.15, 'square', 0.12, 80); }
+function sfxCoin() { tone(988, 0.06, 'square', 0.08); setTimeout(() => tone(1319, 0.1, 'square', 0.08), 60); }
+function sfxDie() { tone(400, 0.12, 'square', 0.12, 100); setTimeout(() => tone(200, 0.35, 'sawtooth', 0.12, 50), 120); }
+function sfxScore() { tone(520, 0.08, 'square', 0.08); setTimeout(() => tone(660, 0.08, 'square', 0.08), 80); setTimeout(() => tone(780, 0.12, 'square', 0.08), 160); }
+
+// ── Game State ─────────────────────────────────────────────
+const GROUND_Y = H - 40;
+const TILE = 16;
+const GRAVITY = 0.45;
+const JUMP_FORCE = -7.8;
+const MAX_FALL = 8;
+
+const STATE = { TITLE: 0, PLAYING: 1, DEAD: 2, GAMEOVER: 3 };
+
+let game = {
+  state: STATE.TITLE,
+  // Player
+  py: GROUND_Y, pvy: 0, grounded: true,
+  frame: 0, frameTimer: 0, jumping: false,
+  // Scrolling
+  speed: 2.2, scrollX: 0, distance: 0,
+  // Score
+  score: 0, highScore: 0, coins: 0,
+  // Spawning
+  spawnTimer: 0, spawnInterval: 120,
+  obstacles: [], enemies: [], coinItems: [], particles: [],
+  // Decorations
+  clouds: [], hills: [], bushes: [],
+  // Difficulty ramp
+  speedBase: 2.2,
+  // Animation
+  titleBlink: 0, deathTimer: 0,
+  // Coyote + buffer
+  coyote: 0, jumpBuffer: 0,
+};
+
+// Player constants
+const PX = 50; // player x position (fixed)
+const PW = 12, PH = 16;
+
+// ── Input ──────────────────────────────────────────────────
+let jumpPressed = false;
+let jumpJust = false;
+
+function onDown(e) {
+  if (e) e.preventDefault();
+  initAudio();
+  jumpJust = true;
+  jumpPressed = true;
+}
+function onUp(e) {
+  if (e) e.preventDefault();
+  jumpPressed = false;
+}
+
+document.addEventListener('mousedown', onDown);
+document.addEventListener('mouseup', onUp);
+document.addEventListener('touchstart', onDown, { passive: false });
+document.addEventListener('touchend', onUp, { passive: false });
+document.addEventListener('keydown', e => {
+  if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyZ') {
+    if (!e.repeat) jumpJust = true;
+    jumpPressed = true;
+  }
+});
+document.addEventListener('keyup', e => {
+  if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyZ') jumpPressed = false;
+});
+
+// ── Drawing Helpers ────────────────────────────────────────
+function rect(x, y, w, h, c) { ctx.fillStyle = c; ctx.fillRect(Math.round(x), Math.round(y), w, h); }
+
+function text(str, x, y, size, color, align) {
+  ctx.font = size + 'px "Press Start 2P", monospace';
+  ctx.textAlign = align || 'left'; ctx.textBaseline = 'top';
+  ctx.fillStyle = C.textShadow; ctx.fillText(str, x + 1, y + 1);
+  ctx.fillStyle = color || C.white; ctx.fillText(str, x, y);
+}
+
+// ── Procedural Decorations ─────────────────────────────────
+function initDecorations() {
+  game.clouds = [];
+  game.hills = [];
+  game.bushes = [];
+  for (let i = 0; i < 6; i++) {
+    game.clouds.push({ x: i * 80 + Math.random() * 40, y: 15 + Math.random() * 30, w: 20 + Math.random() * 14 });
+  }
+  for (let i = 0; i < 4; i++) {
+    game.hills.push({ x: i * 120 + Math.random() * 60, size: 30 + Math.random() * 20 });
+  }
+  for (let i = 0; i < 5; i++) {
+    game.bushes.push({ x: i * 90 + Math.random() * 50, size: 12 + Math.random() * 8 });
+  }
+}
+
+function drawCloud(x, y, w) {
+  const h = w * 0.5;
+  rect(x + w * 0.15, y, w * 0.7, h, C.cloud);
+  rect(x, y + h * 0.3, w, h * 0.5, C.cloud);
+  rect(x + w * 0.25, y - h * 0.15, w * 0.5, h * 0.4, C.cloud);
+  rect(x + w * 0.3, y + h * 0.5, w * 0.3, h * 0.15, C.cloudShade);
+}
+
+function drawHill(x, size) {
+  const y = GROUND_Y;
+  rect(x, y - size * 0.6, size, size * 0.6, C.hillGreen);
+  rect(x + size * 0.2, y - size * 0.8, size * 0.6, size * 0.3, C.hillGreen);
+  rect(x + size * 0.35, y - size * 0.9, size * 0.3, size * 0.15, C.hillGreen);
+  rect(x + size * 0.4, y - size * 0.75, size * 0.15, size * 0.1, C.hillDark);
+}
+
+function drawBush(x, size) {
+  rect(x, GROUND_Y - size * 0.6, size, size * 0.6, C.bushGreen);
+  rect(x + size * 0.15, GROUND_Y - size * 0.8, size * 0.7, size * 0.3, C.bushGreen);
+}
+
+// ── Draw Player ────────────────────────────────────────────
+function drawPlayer(x, y, frame, jumping) {
+  const px = Math.round(x), py = Math.round(y) - PH;
+
+  // Hard hat
+  rect(px + 1, py, 10, 3, C.hardhatYellow);
+  rect(px, py + 3, 12, 2, C.hardhatYellow);
+  rect(px + 3, py + 1, 4, 2, '#fce8a0');
+
+  // Head
+  rect(px + 2, py + 5, 8, 6, C.skin);
+  rect(px + 7, py + 7, 2, 2, C.black); // eye
+  rect(px + 1, py + 5, 10, 2, C.brown); // hair
+
+  // Body
+  rect(px, py + 11, 12, 5, C.uniform);
+  // Bolt
+  rect(px + 4, py + 12, 1, 3, C.belt);
+  rect(px + 5, py + 13, 1, 1, C.belt);
+  rect(px + 6, py + 12, 1, 3, C.belt);
+  // Belt
+  rect(px, py + 15, 12, 1, C.belt);
+
+  // Legs
+  const legY = py + 16;
+  if (jumping) {
+    // Legs tucked
+    rect(px + 1, legY, 4, 3, C.uniformDark);
+    rect(px + 7, legY, 4, 3, C.uniformDark);
+    rect(px, legY + 3, 5, 2, C.darkBrown);
+    rect(px + 7, legY + 3, 5, 2, C.darkBrown);
+  } else if (frame === 0 || frame === 2) {
+    rect(px + 1, legY, 4, 4, C.uniformDark);
+    rect(px + 7, legY, 4, 4, C.uniformDark);
+    rect(px, legY + 4, 5, 2, C.darkBrown);
+    rect(px + 7, legY + 4, 5, 2, C.darkBrown);
+  } else if (frame === 1) {
+    rect(px, legY, 4, 5, C.uniformDark);
+    rect(px + 8, legY, 4, 3, C.uniformDark);
+    rect(px - 1, legY + 5, 5, 2, C.darkBrown);
+    rect(px + 8, legY + 3, 5, 2, C.darkBrown);
+  } else {
+    rect(px + 8, legY, 4, 5, C.uniformDark);
+    rect(px, legY, 4, 3, C.uniformDark);
+    rect(px + 8, legY + 5, 5, 2, C.darkBrown);
+    rect(px - 1, legY + 3, 5, 2, C.darkBrown);
+  }
+}
+
+// ── Draw Enemies ───────────────────────────────────────────
+function drawEnemy(e) {
+  const x = Math.round(e.x), y = Math.round(e.y) - e.h;
+  const f = e.frame;
+
+  if (e.squished) {
+    rect(x + 1, y + e.h - 4, e.w - 2, 4, e.color);
+    return;
+  }
+
+  switch(e.type) {
+    case 0: // Roach
+      rect(x + 1, y + 2, e.w - 2, e.h - 4, C.roachBrown);
+      rect(x + 2, y + 4, 3, 2, '#402000');
+      rect(x + e.w - 5, y + 4, 3, 2, '#402000');
+      rect(x + 2, y, 1, 3, C.roachBrown);
+      rect(x + e.w - 3, y, 1, 3, C.roachBrown);
+      // Legs
+      rect(x - 1, y + e.h - 3 + (f % 2), 2, 2, C.roachBrown);
+      rect(x + e.w - 1, y + e.h - 3 + ((f+1) % 2), 2, 2, C.roachBrown);
+      break;
+    case 1: // Spider
+      rect(x + 2, y + 2, e.w - 4, e.h - 4, C.spiderGray);
+      rect(x + 3, y + 3, 2, 2, '#c03030');
+      rect(x + e.w - 5, y + 3, 2, 2, '#c03030');
+      for (let i = 0; i < 3; i++) {
+        const ly = y + 3 + i * 3;
+        const off = (f + i) % 2;
+        rect(x - 1 + off, ly, 3, 1, C.spiderGray);
+        rect(x + e.w - 2 - off, ly, 3, 1, C.spiderGray);
+      }
+      break;
+    case 2: // Ant
+      rect(x + 2, y + 1, 4, 4, C.antRed);
+      rect(x + 5, y + 3, 6, 6, C.antRed);
+      rect(x + 3, y + 2, 1, 1, C.white);
+      rect(x + 1, y - 1, 1, 2, C.antRed);
+      rect(x + 4, y - 1, 1, 2, C.antRed);
+      rect(x + 5, y + e.h - 3 + (f % 2), 2, 3, C.antRed);
+      rect(x + 9, y + e.h - 3 + ((f+1) % 2), 2, 3, C.antRed);
+      break;
+    case 3: // Beetle
+      rect(x + 1, y + 3, e.w - 2, e.h - 5, C.beetleGreen);
+      rect(x + 2, y + 4, 2, 2, C.white);
+      rect(x + e.w - 4, y + 4, 2, 2, C.white);
+      rect(x + e.w/2 - 1, y + 3, 2, e.h - 5, '#105010');
+      rect(x + 3, y, 4, 4, C.beetleGreen);
+      rect(x - 1, y + e.h - 3 + (f % 2), 2, 2, C.beetleGreen);
+      rect(x + e.w - 1, y + e.h - 3 + ((f+1) % 2), 2, 2, C.beetleGreen);
+      break;
+    case 4: // Fly (airborne)
+      rect(x + 2, y + 4, e.w - 4, e.h - 5, C.flyPurple);
+      rect(x + 3, y + 5, 2, 2, '#ff4040');
+      rect(x + e.w - 5, y + 5, 2, 2, '#ff4040');
+      const wy = f % 2 === 0 ? -2 : 0;
+      rect(x, y + 1 + wy, 4, 3, 'rgba(200,200,255,0.5)');
+      rect(x + e.w - 4, y + 1 + wy, 4, 3, 'rgba(200,200,255,0.5)');
+      break;
+  }
+}
+
+// ── Draw Obstacles ─────────────────────────────────────────
+function drawObstacle(o) {
+  const x = Math.round(o.x), y = Math.round(o.y);
+  if (o.type === 'pipe') {
+    // Pipe
+    const pw = o.w, ph = o.h;
+    rect(x, y, pw, ph, C.pipe);
+    rect(x, y, pw, 3, C.pipeLight);
+    rect(x, y, 2, ph, C.pipeLight);
+    rect(x + pw - 2, y, 2, ph, C.pipeDark);
+    // Lip
+    rect(x - 2, y, pw + 4, 5, C.pipe);
+    rect(x - 2, y, pw + 4, 2, C.pipeLight);
+    rect(x - 2, y, 2, 5, C.pipeLight);
+    rect(x + pw, y, 2, 5, C.pipeDark);
+  } else if (o.type === 'rock') {
+    rect(x + 2, y + 2, o.w - 4, o.h - 2, '#808080');
+    rect(x, y + o.h * 0.3, o.w, o.h * 0.5, '#707070');
+    rect(x + 3, y + 4, 3, 2, '#a0a0a0');
+  }
+}
+
+// ── Draw Coin ──────────────────────────────────────────────
+function drawCoin(c) {
+  const x = Math.round(c.x), y = Math.round(c.y);
+  const widths = [6, 4, 2, 4];
+  const w = widths[c.frame % 4];
+  const ox = (6 - w) / 2;
+  rect(x + ox, y, w, 10, C.coinGold);
+  if (w > 2) rect(x + ox + 1, y + 2, w - 2, 2, C.coinShine);
+}
+
+// ── Particles ──────────────────────────────────────────────
+function spawnParticles(x, y, color, count) {
+  for (let i = 0; i < count; i++) {
+    game.particles.push({
+      x, y,
+      vx: (Math.random() - 0.5) * 4,
+      vy: -Math.random() * 4 - 1,
+      life: 20 + Math.random() * 15,
+      color, size: 2 + Math.random() * 2
+    });
+  }
+}
+
+// ── Spawning ───────────────────────────────────────────────
+function spawnEntity() {
+  const r = Math.random();
+  const spawnX = W + 20;
+
+  if (r < 0.35) {
+    // Coin cluster
+    const count = 2 + Math.floor(Math.random() * 3);
+    const coinY = GROUND_Y - 30 - Math.random() * 30;
+    for (let i = 0; i < count; i++) {
+      game.coinItems.push({
+        x: spawnX + i * 18, y: coinY,
+        w: 8, h: 10, frame: 0, frameTimer: 0, collected: false
+      });
+    }
+  } else if (r < 0.65) {
+    // Enemy bug
+    const types = [0, 1, 2, 3]; // roach, spider, ant, beetle
+    const type = types[Math.floor(Math.random() * types.length)];
+    const size = type === 3 ? 16 : 14;
+    game.enemies.push({
+      x: spawnX, y: GROUND_Y, w: size, h: size,
+      type, frame: 0, frameTimer: 0, squished: false, squishTimer: 0,
+      color: [C.roachBrown, C.spiderGray, C.antRed, C.beetleGreen][type]
+    });
+  } else if (r < 0.82) {
+    // Flying bug (easy to duck under or jump isn't needed — it's high)
+    // Actually, since we only have jump, make fly at a height player can jump over OR go under
+    const flyY = GROUND_Y - 40 - Math.random() * 20;
+    game.enemies.push({
+      x: spawnX, y: flyY, w: 14, h: 14,
+      type: 4, frame: 0, frameTimer: 0, squished: false, squishTimer: 0,
+      color: C.flyPurple, flying: true, flyBaseY: flyY, flyAngle: 0
+    });
+  } else {
+    // Obstacle (small pipe or rock)
+    const isPipe = Math.random() < 0.5;
+    const oh = isPipe ? (20 + Math.floor(Math.random() * 12)) : (12 + Math.floor(Math.random() * 8));
+    const ow = isPipe ? 20 : (14 + Math.floor(Math.random() * 6));
+    game.obstacles.push({
+      x: spawnX, y: GROUND_Y - oh, w: ow, h: oh,
+      type: isPipe ? 'pipe' : 'rock'
+    });
+  }
+}
+
+// ── Reset Game ─────────────────────────────────────────────
+function resetGame() {
+  game.py = GROUND_Y;
+  game.pvy = 0;
+  game.grounded = true;
+  game.jumping = false;
+  game.frame = 0;
+  game.frameTimer = 0;
+  game.speed = game.speedBase;
+  game.scrollX = 0;
+  game.distance = 0;
+  game.score = 0;
+  game.coins = 0;
+  game.spawnTimer = 0;
+  game.spawnInterval = 120;
+  game.obstacles = [];
+  game.enemies = [];
+  game.coinItems = [];
+  game.particles = [];
+  game.coyote = 0;
+  game.jumpBuffer = 0;
+  game.deathTimer = 0;
+  initDecorations();
+}
+
+// ── Update ─────────────────────────────────────────────────
+function update() {
+  if (game.state === STATE.TITLE) {
+    game.titleBlink++;
+    if (jumpJust) {
+      game.state = STATE.PLAYING;
+      resetGame();
+    }
+    jumpJust = false;
+    return;
+  }
+
+  if (game.state === STATE.GAMEOVER) {
+    game.titleBlink++;
+    if (jumpJust) {
+      game.state = STATE.PLAYING;
+      resetGame();
+    }
+    jumpJust = false;
+    return;
+  }
+
+  if (game.state === STATE.DEAD) {
+    game.deathTimer++;
+    if (game.deathTimer > 90) {
+      game.state = STATE.GAMEOVER;
+      game.titleBlink = 0;
+      if (game.score > game.highScore) game.highScore = game.score;
+    }
+    jumpJust = false;
+    return;
+  }
+
+  // ── PLAYING ──
+
+  // Difficulty ramp (very gentle)
+  game.speed = game.speedBase + game.distance * 0.00008;
+  if (game.speed > 4.5) game.speed = 4.5;
+
+  // Scroll
+  game.scrollX += game.speed;
+  game.distance += game.speed;
+
+  // Score from distance
+  game.score = Math.floor(game.distance / 10) + game.coins * 50;
+
+  // Spawn timer
+  game.spawnTimer++;
+  // Wider spacing = easier
+  const minInterval = Math.max(70, 120 - game.distance * 0.003);
+  if (game.spawnTimer >= game.spawnInterval) {
+    spawnEntity();
+    game.spawnInterval = minInterval + Math.random() * 60;
+    game.spawnTimer = 0;
+  }
+
+  // ── Player Jump ──
+  if (game.grounded) {
+    game.coyote = 0;
+  } else {
+    game.coyote++;
+  }
+
+  if (jumpJust) {
+    game.jumpBuffer = 8;
+  } else if (game.jumpBuffer > 0) {
+    game.jumpBuffer--;
+  }
+
+  const canJump = game.grounded || game.coyote < 6;
+  if (game.jumpBuffer > 0 && canJump && game.pvy >= 0) {
+    game.pvy = JUMP_FORCE;
+    game.grounded = false;
+    game.jumping = true;
+    game.coyote = 99;
+    game.jumpBuffer = 0;
+    sfxJump();
+  }
+
+  // Variable jump height — release early = shorter jump
+  if (!jumpPressed && game.pvy < -2) {
+    game.pvy += GRAVITY * 0.5;
+  }
+
+  // Gravity
+  game.pvy += GRAVITY;
+  if (game.pvy > MAX_FALL) game.pvy = MAX_FALL;
+  game.py += game.pvy;
+
+  // Ground collision
+  if (game.py >= GROUND_Y) {
+    game.py = GROUND_Y;
+    game.pvy = 0;
+    game.grounded = true;
+    game.jumping = false;
+  }
+
+  // Walk animation
+  if (game.grounded) {
+    game.frameTimer++;
+    if (game.frameTimer >= 6) {
+      game.frame = (game.frame + 1) % 4;
+      game.frameTimer = 0;
+    }
+  }
+
+  // ── Move & check enemies ──
+  for (let i = game.enemies.length - 1; i >= 0; i--) {
+    const e = game.enemies[i];
+    if (e.squished) {
+      e.squishTimer++;
+      e.x -= game.speed;
+      if (e.squishTimer > 30) game.enemies.splice(i, 1);
+      continue;
+    }
+
+    e.x -= game.speed + (e.flying ? 0 : 0.3);
+    e.frameTimer++;
+    if (e.frameTimer >= 10) { e.frame = (e.frame + 1) % 4; e.frameTimer = 0; }
+
+    // Flying enemy bob
+    if (e.flying) {
+      e.flyAngle += 0.06;
+      e.y = e.flyBaseY + Math.sin(e.flyAngle) * 8;
+    }
+
+    // Remove offscreen
+    if (e.x < -20) { game.enemies.splice(i, 1); continue; }
+
+    // Collision with player
+    const playerL = PX + 2, playerR = PX + PW - 2;
+    const playerT = game.py - PH + 2, playerB = game.py;
+    const eL = e.x, eR = e.x + e.w, eT = e.y - e.h, eB = e.y;
+
+    if (playerR > eL && playerL < eR && playerB > eT && playerT < eB) {
+      // Check if stomping (player falling and feet above enemy midpoint)
+      if (game.pvy > 0 && playerB - game.pvy <= eT + e.h * 0.5) {
+        // Stomp!
+        e.squished = true;
+        e.squishTimer = 0;
+        game.pvy = -5; // bounce
+        game.coins += 1;
+        sfxStomp();
+        spawnParticles(e.x + e.w / 2, e.y - e.h / 2, e.color, 6);
+      } else {
+        // Hit — die
+        game.state = STATE.DEAD;
+        game.deathTimer = 0;
+        sfxDie();
+        spawnParticles(PX + 6, game.py - 8, C.uniform, 8);
+      }
+    }
+  }
+
+  // ── Move & check obstacles ──
+  for (let i = game.obstacles.length - 1; i >= 0; i--) {
+    const o = game.obstacles[i];
+    o.x -= game.speed;
+    if (o.x < -30) { game.obstacles.splice(i, 1); continue; }
+
+    // Collision
+    const playerL = PX + 2, playerR = PX + PW - 2;
+    const playerT = game.py - PH + 4, playerB = game.py;
+    if (playerR > o.x && playerL < o.x + o.w && playerB > o.y + 3 && playerT < o.y + o.h) {
+      game.state = STATE.DEAD;
+      game.deathTimer = 0;
+      sfxDie();
+      spawnParticles(PX + 6, game.py - 8, C.uniform, 8);
+    }
+  }
+
+  // ── Move & check coins ──
+  for (let i = game.coinItems.length - 1; i >= 0; i--) {
+    const c = game.coinItems[i];
+    c.x -= game.speed;
+    c.frameTimer++;
+    if (c.frameTimer >= 8) { c.frame = (c.frame + 1) % 4; c.frameTimer = 0; }
+    if (c.x < -20) { game.coinItems.splice(i, 1); continue; }
+
+    if (!c.collected) {
+      const playerL = PX, playerR = PX + PW;
+      const playerT = game.py - PH, playerB = game.py;
+      if (playerR > c.x && playerL < c.x + c.w && playerB > c.y && playerT < c.y + c.h) {
+        c.collected = true;
+        game.coins++;
+        sfxCoin();
+        spawnParticles(c.x + 4, c.y + 5, C.coinGold, 4);
+        game.coinItems.splice(i, 1);
+      }
+    }
+  }
+
+  // ── Particles ──
+  for (let i = game.particles.length - 1; i >= 0; i--) {
+    const p = game.particles[i];
+    p.x += p.vx; p.y += p.vy; p.vy += 0.15; p.life--;
+    if (p.life <= 0) game.particles.splice(i, 1);
+  }
+
+  // ── Move decorations ──
+  for (const c of game.clouds) {
+    c.x -= game.speed * 0.2;
+    if (c.x + c.w < 0) { c.x = W + Math.random() * 40; c.y = 20 + Math.random() * 40; }
+  }
+  for (const h of game.hills) {
+    h.x -= game.speed * 0.4;
+    if (h.x + h.size < 0) { h.x = W + Math.random() * 80; }
+  }
+  for (const b of game.bushes) {
+    b.x -= game.speed * 0.7;
+    if (b.x + b.size < 0) { b.x = W + Math.random() * 60; }
+  }
+
+  jumpJust = false;
+}
+
+// ── Render ─────────────────────────────────────────────────
+function render() {
+  // Sky gradient
+  ctx.fillStyle = C.sky;
+  ctx.fillRect(0, 0, W, GROUND_Y);
+  ctx.fillStyle = C.skyBottom;
+  ctx.fillRect(0, GROUND_Y - 20, W, 20);
+
+  // Clouds
+  for (const c of game.clouds) drawCloud(c.x, c.y, c.w);
+
+  // Hills
+  for (const h of game.hills) drawHill(h.x, h.size);
+
+  // Bushes
+  for (const b of game.bushes) drawBush(b.x, b.size);
+
+  // Ground
+  rect(0, GROUND_Y, W, 4, C.groundTop);
+  rect(0, GROUND_Y + 4, W, H - GROUND_Y - 4, C.ground);
+  // Ground detail
+  const gOffset = Math.floor(game.scrollX) % 16;
+  for (let gx = -gOffset; gx < W; gx += 16) {
+    rect(gx + 2, GROUND_Y + 7, 2, 2, C.groundDark);
+    rect(gx + 10, GROUND_Y + 12, 2, 2, C.groundDark);
+  }
+
+  if (game.state === STATE.TITLE) {
+    renderTitle();
+    return;
+  }
+
+  if (game.state === STATE.GAMEOVER) {
+    renderGameOver();
+    return;
+  }
+
+  // Obstacles
+  for (const o of game.obstacles) drawObstacle(o);
+
+  // Coins
+  for (const c of game.coinItems) drawCoin(c);
+
+  // Enemies
+  for (const e of game.enemies) drawEnemy(e);
+
+  // Player
+  if (game.state !== STATE.DEAD) {
+    drawPlayer(PX, game.py, game.frame, game.jumping);
+  }
+
+  // Particles
+  for (const p of game.particles) {
+    const alpha = p.life / 30;
+    ctx.globalAlpha = Math.min(1, alpha);
+    rect(p.x, p.y, p.size, p.size, p.color);
+    ctx.globalAlpha = 1;
+  }
+
+  // HUD
+  text('SCORE', 8, 6, 6, '#e8e8e8');
+  text(String(game.score).padStart(7, '0'), 8, 16, 8, C.white);
+
+  // Coin count
+  rect(W - 80, 8, 6, 8, C.coinGold);
+  text('x' + game.coins, W - 70, 8, 7, C.coinGold);
+
+  // Distance indicator
+  const meters = Math.floor(game.distance / 16);
+  text(meters + 'm', W - 50, 20, 6, '#d0d0d0', 'right');
+
+  // Death screen overlay
+  if (game.state === STATE.DEAD) {
+    ctx.globalAlpha = Math.min(0.5, game.deathTimer / 60);
+    rect(0, 0, W, H, C.black);
+    ctx.globalAlpha = 1;
+    if (game.deathTimer > 30) {
+      text('OUCH!', W / 2, H / 2 - 20, 14, '#ff4444', 'center');
+    }
+  }
+}
+
+function renderTitle() {
+  // Title text
+  text('BOLT', W / 2, 30, 20, C.belt, 'center');
+  text('PEST MAN', W / 2, 56, 14, C.white, 'center');
+  text('2.0', W / 2, 76, 20, '#ff6040', 'center');
+
+  // Player
+  drawPlayer(W / 2 - 6, GROUND_Y, Math.floor(game.titleBlink / 10) % 4, false);
+
+  // Draw some bugs
+  const bugX1 = W / 2 + 40 + Math.sin(game.titleBlink * 0.03) * 15;
+  drawEnemy({ x: bugX1, y: GROUND_Y, w: 14, h: 14, type: 0, frame: Math.floor(game.titleBlink / 8) % 4, squished: false, color: C.roachBrown });
+  const bugX2 = W / 2 - 55 + Math.sin(game.titleBlink * 0.025 + 1) * 10;
+  drawEnemy({ x: bugX2, y: GROUND_Y, w: 14, h: 14, type: 1, frame: Math.floor(game.titleBlink / 8) % 4, squished: false, color: C.spiderGray });
+
+  if (Math.floor(game.titleBlink / 30) % 2 === 0) {
+    text('TAP TO START', W / 2, 130, 8, C.white, 'center');
+  }
+
+  text('TAP ANYWHERE TO JUMP', W / 2, 155, 6, '#a0a0a0', 'center');
+  text('STOMP BUGS FOR POINTS', W / 2, 168, 6, '#a0a0a0', 'center');
+
+  if (game.highScore > 0) {
+    text('BEST: ' + String(game.highScore).padStart(7, '0'), W / 2, 190, 7, C.coinGold, 'center');
+  }
+}
+
+function renderGameOver() {
+  // Still show the world behind
+  for (const o of game.obstacles) drawObstacle(o);
+  for (const e of game.enemies) drawEnemy(e);
+  for (const c of game.coinItems) drawCoin(c);
+
+  // Overlay
+  ctx.globalAlpha = 0.6;
+  rect(0, 0, W, H, C.black);
+  ctx.globalAlpha = 1;
+
+  text('GAME OVER', W / 2, 40, 14, '#ff4444', 'center');
+
+  text('SCORE', W / 2, 80, 7, '#a0a0a0', 'center');
+  text(String(game.score).padStart(7, '0'), W / 2, 95, 12, C.white, 'center');
+
+  text('DISTANCE', W / 2, 120, 7, '#a0a0a0', 'center');
+  text(Math.floor(game.distance / 16) + 'm', W / 2, 135, 10, C.coinGold, 'center');
+
+  if (game.score >= game.highScore && game.highScore > 0) {
+    text('NEW BEST!', W / 2, 158, 8, '#ffaa00', 'center');
+  } else if (game.highScore > 0) {
+    text('BEST: ' + String(game.highScore).padStart(7, '0'), W / 2, 158, 7, '#808080', 'center');
+  }
+
+  if (Math.floor(game.titleBlink / 30) % 2 === 0) {
+    text('TAP TO RETRY', W / 2, 185, 8, C.white, 'center');
+  }
+  game.titleBlink++;
+}
+
+// ── Game Loop ──────────────────────────────────────────────
+let lastTime = 0;
+function gameLoop(ts) {
+  const delta = ts - lastTime;
+  lastTime = ts;
+  if (delta > 0 && delta < 200) {
+    update();
+  }
+  render();
+  requestAnimationFrame(gameLoop);
+}
+
+// ── Test Hooks ─────────────────────────────────────────────
+window.render_game_to_text = function() {
+  return JSON.stringify({
+    state: ['TITLE','PLAYING','DEAD','GAMEOVER'][game.state],
+    score: game.score, coins: game.coins,
+    distance: Math.floor(game.distance),
+    player: { y: Math.round(game.py), vy: game.pvy.toFixed(2), grounded: game.grounded, jumping: game.jumping },
+    enemies: game.enemies.length,
+    obstacles: game.obstacles.length,
+    speed: game.speed.toFixed(2)
+  });
+};
+
+window.advanceTime = function(ms) {
+  const steps = Math.max(1, Math.round(ms / (1000/60)));
+  for (let i = 0; i < steps; i++) update();
+  render();
+};
+
+// ── Init ───────────────────────────────────────────────────
+initDecorations();
+document.addEventListener('click', () => initAudio(), { once: true });
+document.addEventListener('touchstart', () => initAudio(), { once: true });
+requestAnimationFrame(gameLoop);
+
+})();
+</script>
+</body>
+</html>
